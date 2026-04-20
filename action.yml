@@ -1,0 +1,70 @@
+name: zig-release
+description: Create a release when the version in build.zig.zon differs from the latest tag
+inputs:
+  cliff_template:
+    description: "URL to git-cliff template configuration"
+    required: false
+    default: "https://raw.githubusercontent.com/jokelbaf/zig-release/master/cliff-template.toml"
+  zig_zon_path:
+    description: "Path to build.zig.zon file"
+    required: false
+    default: "build.zig.zon"
+
+runs:
+  using: composite
+  steps:
+    - name: Compare versions
+      id: compare-versions
+      run: |
+        ZIG_ZON_PATH="${{ inputs.zig_zon_path }}"
+
+        if [ ! -f "$ZIG_ZON_PATH" ]; then
+          echo "Could not find Zig package file at: $ZIG_ZON_PATH"
+          exit 1
+        fi
+
+        LOCAL_VERSION=$(grep -E '^[[:space:]]*\.version[[:space:]]*=' "$ZIG_ZON_PATH" | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')
+
+        if [ -z "$LOCAL_VERSION" ]; then
+          echo "Failed to parse .version from: $ZIG_ZON_PATH"
+          exit 1
+        fi
+
+        if [ $(git tag -l | wc -l) -eq 0 ]; then
+          echo "No tags found - proceeding with first release"
+          echo "local_version=$LOCAL_VERSION" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+        
+        REMOTE_VERSION=$(git describe --tags --abbrev=0 | sed 's/^v//')
+        echo "Remote: $REMOTE_VERSION, Local: $LOCAL_VERSION"
+        
+        if [ "$REMOTE_VERSION" = "$LOCAL_VERSION" ]; then
+          echo "Versions match - skipping release"
+          exit 0
+        fi
+        
+        echo "local_version=$LOCAL_VERSION" >> $GITHUB_OUTPUT
+      shell: bash
+    
+    - name: Create local tag
+      if: steps.compare-versions.outputs.local_version != ''
+      run: git tag v${{ steps.compare-versions.outputs.local_version }}
+      shell: bash
+
+    - name: Generate changelog
+      if: steps.compare-versions.outputs.local_version != ''
+      uses: orhun/git-cliff-action@v4
+      with:
+        args: --latest --strip header --config-url ${{ inputs.cliff_template }}
+        version: v2.9.0
+      env:
+        GITHUB_REPO: ${{ github.repository }}
+      id: git-cliff
+
+    - name: Create release
+      if: steps.compare-versions.outputs.local_version != ''
+      uses: softprops/action-gh-release@v2
+      with:
+        body: ${{ steps.git-cliff.outputs.content }}
+        tag_name: v${{ steps.compare-versions.outputs.local_version }}
