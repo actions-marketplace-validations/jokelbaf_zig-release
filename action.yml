@@ -9,6 +9,9 @@ inputs:
     description: "Path to build.zig.zon file"
     required: false
     default: "build.zig.zon"
+branding:
+  icon: 'box'
+  color: yellow
 
 runs:
   using: composite
